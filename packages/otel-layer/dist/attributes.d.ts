@@ -1,0 +1,11 @@
+export type AttributeValue = string | number | boolean | readonly (string | number | boolean)[];
+export type Attributes = Readonly<Record<string, AttributeValue>>;
+export type DropClass = "secret_key" | "content_key" | "not_allowed" | "credential_value" | "invalid_value" | "limit" | "free_text";
+export type OnDrop = (reason: DropClass) => void;
+export declare const fleetAttributes: readonly string[];
+export declare const semanticPrefixes: readonly ["service.", "host.", "deployment.", "vcs.", "http.", "url.", "server.", "client.", "network.", "db.", "rpc.", "messaging.", "error.", "exception.", "code.", "process.", "os.", "container.", "k8s.", "cloud.", "faas.", "otel.", "telemetry.", "event.", "thread.", "system.", "disk.", "cpu.", "memory.", "linux.", "jvm.", "nodejs.", "dotnet.", "go.", "aspnetcore.", "browser.", "webengine.", "device.", "android.", "ios.", "aws.", "azure.", "gcp.", "signalr.", "tls.", "dns.", "gen_ai."];
+export declare const USAGE_COUNTER_KEYS: readonly string[];
+export declare const looksLikeCredential: (value: string) => boolean;
+export declare const sanitizeAttribute: (key: string, value: unknown, onDrop: OnDrop) => AttributeValue | undefined;
+export declare const sanitizeAttributes: (attributes: Iterable<readonly [string, unknown]>, onDrop: OnDrop) => Attributes;
+export declare const eventName: (value: unknown, onDrop: OnDrop) => string;

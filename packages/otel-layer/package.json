@@ -17,7 +17,7 @@
     "check": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:matrix": "bash fixtures/test-matrix.sh",
-    "prepare": "tsc -p tsconfig.build.json"
+    "check:dist": "bash ../../scripts/check-layer-dist.sh"
   },
   "devDependencies": {
     "@effect/vitest": "4.0.5",

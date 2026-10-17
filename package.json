@@ -8,7 +8,7 @@
     "pnpm": ">=11.1.2"
   },
   "scripts": {
-    "check": "pnpm -r --if-present check",
+    "check": "pnpm -r --if-present check && bash scripts/check-layer-dist.sh",
     "test": "pnpm -r --if-present test",
     "lint": "oxlint .",
     "format": "oxfmt ."

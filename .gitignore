@@ -4,3 +4,6 @@ dist/
 *.log
 .env
 .env.*
+
+# The otel-layer dist is committed so git-dependency installs need no build step.
+!packages/otel-layer/dist/
