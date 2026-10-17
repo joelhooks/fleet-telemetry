@@ -21,7 +21,23 @@ python3 scripts/render-clickhouse-ddl.py --check
 
 ## Queue and delivery boundary
 
-Each signal has a **250,000-request** persistent queue. The current volume is about 220,000 events per day. Even one event per request fits more than 24 hours in each signal's queue. Batched requests provide more headroom. Queue size is measured in requests, not bytes or rows. Provision disk from measured event sizes; at 4 KiB per one-event request, 250,000 requests take roughly 1 GiB per signal before database overhead. There is no disk quota or automatic queue deletion here. Alert on free disk space and queue utilization before enabling fleet traffic.
+Each signal has a **20 GiB serialized-payload cap**, configured with `sizer: bytes` and `OTEL_QUEUE_BYTES` (default `21474836480`). The same cap applies independently to traces, logs and metrics: **60 GiB aggregate** at the default, before storage overhead and logs. Set a smaller per-signal budget from the deployment host's free disk space, allowing headroom for all three queues. A larger request cannot bypass this cap: an offer that exceeds remaining capacity is rejected.
+
+The pinned exporterhelper supports bytes with persistent storage. Its [persistent queue reports `metadata.BytesSize`](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.163.0/exporter/exporterhelper/internal/queue/persistent_queue.go#L132-L135), and its [offer path checks active size against capacity before storage](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.163.0/exporter/exporterhelper/internal/queue/persistent_queue.go#L269-L287). A stale comment in the config validator mentions request-only sizing; the implementation and actual recovery proof support bytes.
+
+This is a **payload byte cap, not a filesystem quota**. The storage database also needs metadata and free pages, can retain its high-water file size after draining, and shares disk with logs. `OTEL_QUEUE_BYTES` therefore must be comfortably below one third of the space available to this collector. Alert on free disk space and queue utilization before enabling fleet traffic. There is no automatic deletion of queued data.
+
+The old 250,000-request limit had no byte cap. The ten-minute proof measured a weighted mean of **7,239.67 serialized bytes per queued request**, versus 41,780.33 HTTP JSON bytes per ingress request. Its per-signal means give this sizing example for the old request limit:
+
+| Signal | Mean serialized bytes/request | 250,000 requests at that mean |
+| --- | ---: | ---: |
+| Traces | 12,549 | 2.922 GiB |
+| Logs | 6,889 | 1.604 GiB |
+| Metrics | 2,281 | 0.531 GiB |
+
+That is **5.057 GiB aggregate payload** for these request shapes, before overhead. At the proof's peak, 13,031,400 payload bytes occupied queue files with 29,360,128 bytes of logical file length (28 MiB) and 16,076,800 allocated bytes (15.33 MiB). These are measurements, not a universal storage-overhead ratio. `docs/collector-fix-proof.json` records the full figures and source hashes.
+
+There is **no finite worst-case disk bound derivable from a request limit and a mean size alone**. Requests can grow. The new byte cap, not that estimate, enforces the payload limit. At roughly 220,000 events per day, provision a 24-hour budget from measured serialized bytes per day rather than assuming every event has a fixed size.
 
 `file_storage` uses `fsync: true`. Batching happens in `sending_queue.batch`, **after persistent enqueue**, rather than in a volatile `batch` processor. This is supported by the pinned [exporterhelper queue batcher](https://github.com/open-telemetry/opentelemetry-collector/blob/v0.163.0/exporter/exporterhelper/internal/queuebatch/config.go). The memory limiter runs first. The queue does not wait for export results or block on overflow. A full queue, memory pressure, invalid telemetry or a disk error can still cause ingress rejection. Callers must handle OTLP errors.
 
@@ -31,9 +47,19 @@ The no-loss proof is scoped to **successful collector ingress through disk queue
 
 ## Privacy
 
-The collector deletes case-insensitive secret-shaped attribute keys containing token, key, secret, password, authorization, cookie, prompt, body or message. It drops URL-shaped keys, including `url.full`, `http.url`, `http.target`, `url.query` and `url.path`, rather than retaining IDs in paths. It strips query suffixes from other string attribute values. Resource, scope and span-event maps receive the same treatment. Log bodies become `<redacted>` and span status messages become empty strings. Put a short, stable event name in **`event.name`**, which survives these filters.
+The collector deletes case-insensitive secret-shaped attribute keys containing token, key, secret, password, authorization, cookie, prompt, body or message, with five **integer-only** exceptions:
 
-`redaction-fixture.json` contains a celld-shaped console log and token-bearing URL attributes. The kill test sends that fixture and checks stored rows for removed keys, stripped query strings, redacted bodies and preserved `event.name`.
+- `gen_ai.usage.input_tokens`
+- `gen_ai.usage.output_tokens`
+- `gen_ai.usage.total_tokens`
+- `gen_ai.usage.cached_input_tokens`
+- `gen_ai.usage.reasoning_tokens`
+
+Each context clears a temporary cache, saves only integer values for those exact keys, deletes secret-shaped keys, restores the approved counters, and removes the cache. The exporter stores attributes in `Map(String, String)`, so persisted counter values are string representations of validated integers. Strings, floats, booleans and unlisted keys such as `foo_tokens` remain subject to deletion. There is no wildcard token exception and no experimental feature gate. The producer layer currently generates no `fleet.usage.*_tokens` attributes; review an explicit key before adding one to the collector's list.
+
+The filter also drops URL-shaped keys, including `url.full`, `http.url`, `http.target`, `url.query` and `url.path`, rather than retaining IDs in paths. It strips query suffixes from other string attribute values. Resource, scope and span-event maps receive the same treatment. Log bodies become `<redacted>` and span status messages become empty strings. Put a short, stable event name in **`event.name`**, which survives these filters.
+
+`redaction-fixture.json` contains a celld-shaped console log, token-bearing URLs, `api_token="x"`, an integer `foo_tokens`, and all five approved integer counters including `gen_ai.usage.input_tokens=123`. The kill test alternates integer and string-valued usage records to detect cache leakage. It checks span, span-event, log, all five metric datapoint types, resource and available scope columns for retained counters and removed secrets, plus stripped query strings, redacted bodies and preserved `event.name`.
 
 This is defense in depth, not a replacement for a producer-side attribute allowlist. Do not send secrets, arbitrary payloads, customer data, prompts, dynamic span names or nested untrusted structures. The filtering contract covers the tested attribute maps; it is not a general sanitizer for every possible OTLP field, nested map, link or exemplar.
 
@@ -47,13 +73,16 @@ The collector expands `${env:...}` itself. Alchemy forwards the deployment value
 | `CLICKHOUSE_USERNAME` | `default` | ClickHouse user with INSERT permission on reviewed `otel` tables. |
 | `CLICKHOUSE_PASSWORD` | empty | Optional credential, passed as an Effect `Redacted` value to the resource. |
 | `OTEL_COLLECTOR_HOST` | required | Operator-selected collector identity, added as `collector.host`. |
-| `OTEL_BIND` | `127.0.0.1` | One OTLP listener address. Use the approved private interface for fleet ingress; never a public wildcard. |
+| `OTEL_TAILNET_BIND` | required, no fallback | Explicit approved private IPv4 address for the second OTLP receiver. Loopback remains enabled independently. |
+| `OTEL_QUEUE_BYTES` | `21474836480` (20 GiB) | Serialized payload cap **per signal**, not a filesystem quota. Three signals allow 60 GiB aggregate at the default. |
 | `OTEL_DATA_DIR` | `$HOME/.local/share/fleet-telemetry` in the stack | Persistent queue and collector logs. Retain across redeploys. Required for standalone collector execution. |
 | `HOME` | user's environment | LaunchAgent and versioned binary location. |
 
 Standalone config also supports `OTEL_GRPC_PORT` (4317), `OTEL_HTTP_PORT` (4318), `OTEL_HEALTH_BIND` (loopback), `OTEL_HEALTH_PORT` (13133), and `OTEL_METRICS_PORT` (8888). These are proof overrides, not exposed stack props. Health and internal metrics stay loopback-only by default.
 
-The unauthenticated OTLP receiver belongs on loopback or an operator-approved, access-controlled private network. Do not expose it to the internet. The health endpoint reports process health, **not** ClickHouse availability or completed delivery.
+Both OTLP receivers feed all three pipelines. `otlp` binds loopback; `otlp/tailnet` binds `OTEL_TAILNET_BIND`, with the same gRPC and HTTP ports. There is no Serve hop and no extra LaunchAgent right is needed to bind the private interface. The second address is mandatory, even during validation. Alchemy checks the input and launches through `scripts/collector.sh`, which refuses missing, wildcard, malformed or colliding addresses **before executing the collector**. Always use this wrapper: bare env interpolation can turn a missing host into `:4317`, an unsafe all-interfaces bind.
+
+The unauthenticated second receiver belongs only on the approved, access-controlled private network. Do not expose it to the internet or use `0.0.0.0`. The health endpoint reports process health, **not** ClickHouse availability or completed delivery.
 
 ## Deploy: operator review required
 
@@ -61,7 +90,7 @@ Deployment requires macOS arm64, a logged-in GUI user session and the reviewed C
 
 1. List all listening ports and resolve conflicts before choosing the bind address. The standard OTLP ports may already be occupied.
 2. Review the DDL, collector config and Alchemy plan. Confirm the endpoint, database `otel`, user permissions and free disk capacity. Keep credentials out of source files, shell history and plan artifacts.
-3. Use the same checkout, working directory and stage for plan, deploy and destroy. Keep it in place: the LaunchAgent uses an absolute config path in this checkout. Alchemy hashes the config into the agent props so config changes restart it.
+3. Use the same checkout, working directory and stage for plan, deploy and destroy. Keep it in place: the LaunchAgent uses absolute config and preflight paths in this checkout. Alchemy hashes both files into the agent props so changes restart it.
 4. Set the variables above through the approved local secret/environment mechanism, then:
 
 ```sh
@@ -112,7 +141,7 @@ Run the outage proof only on the assigned Linux test worker, never on a deployme
 scripts/kill-test.sh
 ```
 
-The default proof stops ClickHouse for **600 seconds** while sending 20 spans, 20 logs and one point of each of five metric types every second. It measures sender latency and queue depth, SIGKILLs the collector, recovers its disk queue while ClickHouse remains down, restores ClickHouse, and verifies exact counts plus unique span IDs and the redaction fixture. All owned processes stop on completion or failure. Evidence remains in a new `kill-test-*` directory; preserve `result.json`, then reversibly trash disposable data. `--outage-seconds 5` is a smoke test, not the acceptance proof.
+The proof first sends a full request of each signal through **each** HTTP receiver. The second receiver uses a separate local loopback address as a stand-in, never a real network interface. It then stops ClickHouse for **600 seconds** while sending 20 spans, 20 logs and one point of each of five metric types every second. It measures sender latency, serialized queue bytes and physical storage sizes, SIGKILLs the collector, recovers exactly the same queued bytes while ClickHouse remains down, restores ClickHouse, and verifies counts, unique span IDs, the redaction fixture and integer-only usage counters. It also verifies that each queue reports the configured byte capacity. All owned processes stop on completion or failure. Evidence remains in a new `kill-test-*` directory; preserve `result.json`, then reversibly trash disposable data. `--outage-seconds 5` is a smoke test, not the acceptance proof.
 
 Code gates:
 
@@ -122,7 +151,7 @@ pnpm exec oxlint apps
 pnpm --filter @fleet-telemetry/infra test
 python3 scripts/render-clickhouse-ddl.py --check
 # With the required env values set; validation resolves the template:
-"$OTELCOL_BINARY" validate --config apps/collector/collector.yaml
+scripts/collector.sh "$OTELCOL_BINARY" validate --config apps/collector/collector.yaml
 ```
 
 Set `FLEET_TEST_ROOT` to disposable scratch for resource tests. Set `COLLECTOR_TEST_ARCHIVE` to the real darwin-arm64 release archive to run the optional real-archive installation/idempotence test on Linux without executing the macOS binary. Fake launchctl tests cover lifecycle calls and file modes, not actual macOS service behavior.

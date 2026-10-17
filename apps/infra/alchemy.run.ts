@@ -12,11 +12,18 @@ import {
   CollectorBinaryProvider,
   COLLECTOR_VERSION,
 } from "./src/collector-binary.js";
+import {
+  collectorSettings,
+  DEFAULT_QUEUE_BYTES,
+} from "./src/collector-settings.js";
 import { LaunchdAgent, LaunchdAgentProvider } from "./src/launchd-agent.js";
 import { operation } from "./src/operation.js";
 
 const configPath = fileURLToPath(
   new URL("../collector/collector.yaml", import.meta.url)
+);
+const startPath = fileURLToPath(
+  new URL("../../scripts/collector.sh", import.meta.url)
 );
 
 export default Alchemy.Stack(
@@ -38,12 +45,17 @@ export default Alchemy.Stack(
     const password = yield* Config.Redacted("CLICKHOUSE_PASSWORD").pipe(
       Config.withDefault("")
     );
-    const bind = yield* Config.String("OTEL_BIND").pipe(
-      Config.withDefault("127.0.0.1")
+    const bind = yield* Config.String("OTEL_TAILNET_BIND");
+    const queueBytes = yield* Config.Int("OTEL_QUEUE_BYTES").pipe(
+      Config.withDefault(DEFAULT_QUEUE_BYTES)
     );
+    const settings = yield* operation("CollectorSettings.validate", () =>
+      Promise.resolve(collectorSettings(bind, queueBytes))
+    ).pipe(Effect.orDie);
     const configDigest = yield* operation("CollectorConfig.digest", async () =>
       createHash("sha256")
         .update(await readFile(configPath))
+        .update(await readFile(startPath))
         .digest("hex")
     ).pipe(Effect.orDie);
     const binary = yield* CollectorBinary("Binary", {
@@ -54,15 +66,21 @@ export default Alchemy.Stack(
         CLICKHOUSE_ENDPOINT: endpoint,
         CLICKHOUSE_PASSWORD: password,
         CLICKHOUSE_USERNAME: username,
-        OTEL_BIND: bind,
+        ...settings,
         OTEL_COLLECTOR_HOST: collectorHost,
-        // A config change changes the resource digest and restarts the agent.
+        // Config or preflight changes restart the agent.
         OTEL_CONFIG_SHA256: configDigest,
         OTEL_DATA_DIR: dataDirectory,
       },
       keepAlive: true,
       label: "com.fleet-telemetry.collector",
-      programArguments: [binary.path, "--config", configPath],
+      programArguments: [
+        "/bin/sh",
+        startPath,
+        binary.path,
+        "--config",
+        configPath,
+      ],
       stderrPath: path.join(dataDirectory, "collector.stderr.log"),
       stdoutPath: path.join(dataDirectory, "collector.stdout.log"),
       throttleInterval: 10,

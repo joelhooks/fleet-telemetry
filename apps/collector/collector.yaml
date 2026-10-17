@@ -1,12 +1,19 @@
 # otelcol-contrib 0.163.1 (clickhouseexporter 0.163.0).
+# Run through scripts/collector.sh for the mandatory private-bind preflight.
 # Never creates schema. Review plans/clickhouse-otel-ddl.sql separately.
 receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: ${env:OTEL_BIND:-127.0.0.1}:${env:OTEL_GRPC_PORT:-4317}
+        endpoint: 127.0.0.1:${env:OTEL_GRPC_PORT:-4317}
       http:
-        endpoint: ${env:OTEL_BIND:-127.0.0.1}:${env:OTEL_HTTP_PORT:-4318}
+        endpoint: 127.0.0.1:${env:OTEL_HTTP_PORT:-4318}
+  otlp/tailnet:
+    protocols:
+      grpc:
+        endpoint: ${env:OTEL_TAILNET_BIND}:${env:OTEL_GRPC_PORT:-4317}
+      http:
+        endpoint: ${env:OTEL_TAILNET_BIND}:${env:OTEL_HTTP_PORT:-4318}
 
 extensions:
   health_check:
@@ -21,56 +28,51 @@ processors:
     check_interval: 1s
     limit_mib: 512
     spike_limit_mib: 128
-  attributes/secret_keys:
-    actions:
-      - pattern: '(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\.target).*'
-        action: delete
-  # attributes covers only span/log/datapoint attributes, not resource/scope/events.
-  # Drop URL keys entirely and strip query suffixes from arbitrary string attributes.
+  # Save only explicitly approved integer usage counters before removing secrets.
+  # Empty the temporary map per context so values cannot leak across records.
+  # No experimental functions or feature gates are required.
   transform/safety:
     error_mode: propagate
     trace_statements:
       - context: resource
-        statements:
+        # The same complete list is reused in every attribute context below.
+        statements: &safe_attributes
+          - 'set(cache["safe_usage"], {})'
+          - 'set(cache["safe_usage"]["gen_ai.usage.input_tokens"], attributes["gen_ai.usage.input_tokens"]) where IsInt(attributes["gen_ai.usage.input_tokens"])'
+          - 'set(cache["safe_usage"]["gen_ai.usage.output_tokens"], attributes["gen_ai.usage.output_tokens"]) where IsInt(attributes["gen_ai.usage.output_tokens"])'
+          - 'set(cache["safe_usage"]["gen_ai.usage.total_tokens"], attributes["gen_ai.usage.total_tokens"]) where IsInt(attributes["gen_ai.usage.total_tokens"])'
+          - 'set(cache["safe_usage"]["gen_ai.usage.cached_input_tokens"], attributes["gen_ai.usage.cached_input_tokens"]) where IsInt(attributes["gen_ai.usage.cached_input_tokens"])'
+          - 'set(cache["safe_usage"]["gen_ai.usage.reasoning_tokens"], attributes["gen_ai.usage.reasoning_tokens"]) where IsInt(attributes["gen_ai.usage.reasoning_tokens"])'
           - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
+          - 'merge_maps(attributes, cache["safe_usage"], "upsert")'
+          - 'delete_key(cache, "safe_usage")'
           - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
       - context: scope
-        statements:
-          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+        statements: *safe_attributes
       - context: spanevent
-        statements:
-          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+        statements: *safe_attributes
+      - context: span
+        statements: *safe_attributes
       - context: span
         statements:
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
           - 'set(status.message, "")'
     log_statements:
       - context: resource
-        statements:
-          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+        statements: *safe_attributes
       - context: scope
-        statements:
-          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+        statements: *safe_attributes
+      - context: log
+        statements: *safe_attributes
       - context: log
         statements:
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
           - 'set(body, "<redacted>")'
     metric_statements:
       - context: resource
-        statements:
-          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+        statements: *safe_attributes
       - context: scope
-        statements:
-          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+        statements: *safe_attributes
       - context: datapoint
-        statements:
-          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+        statements: *safe_attributes
   resource:
     attributes:
       - key: collector.host
@@ -90,8 +92,8 @@ exporters:
     sending_queue:
       enabled: true
       num_consumers: 4
-      sizer: requests
-      queue_size: 250000
+      sizer: bytes
+      queue_size: ${env:OTEL_QUEUE_BYTES:-21474836480}
       storage: file_storage
       block_on_overflow: false
       # Batch AFTER durable enqueue, not in a volatile batch processor.
@@ -121,14 +123,14 @@ service:
                 port: ${env:OTEL_METRICS_PORT:-8888}
   pipelines:
     traces:
-      receivers: [otlp]
-      processors: [memory_limiter, attributes/secret_keys, transform/safety, resource]
+      receivers: [otlp, otlp/tailnet]
+      processors: [memory_limiter, transform/safety, resource]
       exporters: [clickhouse]
     logs:
-      receivers: [otlp]
-      processors: [memory_limiter, attributes/secret_keys, transform/safety, resource]
+      receivers: [otlp, otlp/tailnet]
+      processors: [memory_limiter, transform/safety, resource]
       exporters: [clickhouse]
     metrics:
-      receivers: [otlp]
-      processors: [memory_limiter, attributes/secret_keys, transform/safety, resource]
+      receivers: [otlp, otlp/tailnet]
+      processors: [memory_limiter, transform/safety, resource]
       exporters: [clickhouse]

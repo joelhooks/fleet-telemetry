@@ -14,7 +14,9 @@ The collector owns delivery after successful OTLP ingress, not the producer's qu
 - Pin collector 0.163.1 and its ClickHouse exporter 0.163.0. Use the exporter's Map-based schema for ClickHouse 24.12, not JSON or newer full-text indexes.
 - Keep `create_schema: false`. Only a reviewed operator action may apply `plans/clickhouse-otel-ddl.sql`. The isolated proof applies it only to its newly started throwaway database.
 - Batch after persistent enqueue with `sending_queue.batch`, not a volatile processor. The queue uses file storage with fsync and retries without an elapsed-time limit.
-- Drop URL attributes and secret-shaped keys, strip other attribute query strings, and redact every log body. Keep stable event names in `event.name`.
+- Drop URL attributes and secret-shaped keys, strip other attribute query strings, and redact every log body. Keep stable event names in `event.name`. After review, preserve only the five explicit integer `gen_ai.usage` counters through a cleared per-context cache before deletion and restore afterward. Strings and unlisted token keys still disappear. The producer layer generates no fleet usage keys, so none are exempted.
+- Replace the initial request-count queue with byte sizing. `OTEL_QUEUE_BYTES` defaults to 20 GiB per signal, or 60 GiB aggregate payload. Exporterhelper 0.163.0's persistent queue measures `metadata.BytesSize` and rejects offers over capacity. Physical database overhead, retained high-water files and logs still require disk headroom; this is not a filesystem quota.
+- Bind both loopback and an explicit `OTEL_TAILNET_BIND` address. Stack validation and the mandatory start/validate wrapper reject missing, wildcard and colliding addresses. Never trust missing env interpolation to reject `:4317`, which can bind all interfaces.
 - Keep `LaunchdAgent` generic and separate from the collector binary installer. It refuses unmanaged plists and requires a macOS GUI user session. Verified binaries and queued data survive destroy for rollback.
 - Do not reuse or route Alchemy's own telemetry layer into this collector. The CLI commands in the runbook disable only that invocation's vendor telemetry.
 
@@ -22,7 +24,9 @@ The collector owns delivery after successful OTLP ingress, not the producer's qu
 
 `docs/collector-proof.json` records the full 600-second outage run. It restored 12,020 spans, 12,020 logs and 601 points in each of five metric tables. The persistent queue retained 1,800 requests across a collector SIGKILL/restart while ClickHouse was still down, then drained to zero. Maximum sender latency was 9.262 ms with zero sender errors.
 
-The resource tests exercise plist rendering, create/update/delete/read, mode 600, unmanaged-file protection, platform guards, checksum rejection, cache integrity and actual release-archive installation/idempotence. They use a fake launchctl. They do not prove real launchd behavior.
+That initial proof used request sizing. `docs/collector-fix-proof.json` records the follow-up 600.498-second outage: 12,040 spans, 12,040 logs, 602 points per metric type, zero sender errors, and all 13,031,400 queued bytes retained across a collector crash before draining. It also records both receiver addresses, physical storage sizes and source hashes. The second receiver uses another local loopback address in tests, never a real tailnet interface. A separate one-byte-cap probe rejected a request with HTTP 503 and left all queues empty.
+
+The resource tests exercise plist rendering, create/update/delete/read, mode 600, unmanaged-file protection, platform guards, checksum rejection, cache integrity and actual release-archive installation/idempotence. They also check byte-budget inputs and missing/wildcard bind preflight. They use a fake launchctl. They do not prove real launchd behavior.
 
 ## Deployment remains separate
 

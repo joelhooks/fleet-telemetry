@@ -1,0 +1,69 @@
+{
+  "scope": "Local throwaway ClickHouse only; no native deployment or live schema change",
+  "command": "scripts/kill-test.sh",
+  "outage_seconds_requested": 600,
+  "outage_seconds_actual": 600.498,
+  "elapsed_seconds": 612.565,
+  "requests": 1806,
+  "sender_errors": 0,
+  "max_sender_seconds": 0.21934312512166798,
+  "queue_capacity_bytes_per_signal": 21474836480,
+  "queue_peak_bytes": 13031400,
+  "queue_before_restart_bytes": 13031400,
+  "queue_after_restart_bytes": 13031400,
+  "queue_final_bytes": 0,
+  "queued_requests_at_restart": 1800,
+  "queue_peak_bytes_by_signal": {
+    "traces": 7529400,
+    "logs": 4133400,
+    "metrics": 1368600
+  },
+  "mean_queued_request_bytes": 7239.666666666667,
+  "mean_queued_request_bytes_by_signal": {
+    "traces": 12549,
+    "logs": 6889,
+    "metrics": 2281
+  },
+  "otlp_json_bytes_total": 75455282,
+  "otlp_json_bytes_max": 72866,
+  "mean_otlp_json_request_bytes": 41780.333333333336,
+  "queue_storage_file_bytes_at_restart": 29360128,
+  "queue_storage_allocated_bytes_at_restart": 16076800,
+  "source_sha256": {
+    "apps/collector/collector.yaml": "6b9860c603496cab513fa44aa340c40336bae882f0f9f77f2805ae79a94a7050",
+    "scripts/collector.sh": "df15538bec975f19bbe088dcf1ed95c9038bed23ece20aad5debb5cd693818d9",
+    "scripts/kill-test.py": "3e8c9e7ac41d16a709c0db93e4cdab16ad17d5c50c6a087ba070c5cadb21cec5",
+    "apps/collector/redaction-fixture.json": "bda0e414d2ee41638222342acb573edf0ffef8b23a5fba49712168d092dba28f"
+  },
+  "versions": {
+    "clickhouse": "ClickHouse local version 24.12.6.70 (official build).",
+    "collector": "otelcol-contrib version 0.163.1"
+  },
+  "receivers_tested": [
+    "loopback HTTP",
+    "second local HTTP address standing in for tailnet"
+  ],
+  "redaction_fixture": "celld bodies, URL keys, query strings and secret-shaped keys scrubbed; event.name preserved; five approved integer usage counters kept; string and unlisted token attributes dropped",
+  "expected_spans_and_logs": 12040,
+  "counts": {
+    "otel_traces": 12040,
+    "otel_logs": 12040,
+    "otel_metrics_gauge": 602,
+    "otel_metrics_sum": 602,
+    "otel_metrics_summary": 602,
+    "otel_metrics_histogram": 602,
+    "otel_metrics_exponential_histogram": 602
+  },
+  "byte_cap_rejection_probe": {
+    "queue_capacity_bytes_per_signal": 1,
+    "http_status": 503,
+    "response": { "code": 14, "message": "sending queue is full" },
+    "queue_sizes_after_rejection": [0, 0, 0],
+    "observed_capacities": [1, 1, 1],
+    "scope": "Owned collector and reserved non-listening local database socket; no database process or live endpoint",
+    "passed": true
+  },
+  "passed": true,
+  "native_tailnet_and_launchd_check": "Not run; operator deployment readback required",
+  "disk_boundary": "20 GiB payload per signal, 60 GiB aggregate; physical storage overhead, high-water files and logs are not bounded by this payload cap"
+}
