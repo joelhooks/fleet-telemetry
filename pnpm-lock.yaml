@@ -45,6 +45,18 @@ importers:
         specifier: 4.0.5
         version: 4.0.5
 
+  packages/otel-layer:
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.5
+        version: 4.0.5(effect@4.0.5)(vitest@5.0.3(@types/node@24.13.6)(vite@8.3.4(@types/node@24.13.6)(yaml@2.9.1)))
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@24.13.6)(vite@8.3.4(@types/node@24.13.6)(yaml@2.9.1))
+
 packages:
 
   '@alchemy.run/cloudflare-runtime@2.0.0-beta.83':

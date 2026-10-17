@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2023", "ESNext.Disposable", "DOM"],
+    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "target": "ES2023"
+  },
+  "include": ["smoke.ts"]
+}
