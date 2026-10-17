@@ -74,13 +74,19 @@ The collector expands `${env:...}` itself. Alchemy forwards the deployment value
 | `CLICKHOUSE_PASSWORD` | empty | Optional credential, passed as an Effect `Redacted` value to the resource. |
 | `OTEL_COLLECTOR_HOST` | required | Operator-selected collector identity, added as `collector.host`. |
 | `OTEL_TAILNET_BIND` | required, no fallback | Explicit approved private IPv4 address for the second OTLP receiver. Loopback remains enabled independently. |
+| `OTEL_LOOPBACK_GRPC_PORT` | `4317` | Loopback-only gRPC port; stack input, integer 1024–65535. |
+| `OTEL_LOOPBACK_HTTP_PORT` | `4318` | Loopback-only HTTP port; stack input, integer 1024–65535. |
 | `OTEL_QUEUE_BYTES` | `21474836480` (20 GiB) | Serialized payload cap **per signal**, not a filesystem quota. Three signals allow 60 GiB aggregate at the default. |
 | `OTEL_DATA_DIR` | `$HOME/.local/share/fleet-telemetry` in the stack | Persistent queue and collector logs. Retain across redeploys. Required for standalone collector execution. |
 | `HOME` | user's environment | LaunchAgent and versioned binary location. |
 
-Standalone config also supports `OTEL_GRPC_PORT` (4317), `OTEL_HTTP_PORT` (4318), `OTEL_HEALTH_BIND` (loopback), `OTEL_HEALTH_PORT` (13133), and `OTEL_METRICS_PORT` (8888). These are proof overrides, not exposed stack props. Health and internal metrics stay loopback-only by default.
+The two loopback ports must be distinct and cannot use the health or metrics ports (13133 and 8888 in the stack). Pi-side local servers can occupy standard OTLP ports. In that case, choose an unused loopback pair such as **14317/14318** through these stack inputs; the private receiver stays on **4317/4318**.
 
-Both OTLP receivers feed all three pipelines. `otlp` binds loopback; `otlp/tailnet` binds `OTEL_TAILNET_BIND`, with the same gRPC and HTTP ports. There is no Serve hop and no extra LaunchAgent right is needed to bind the private interface. The second address is mandatory, even during validation. Alchemy checks the input and launches through `scripts/collector.sh`, which refuses missing, wildcard, malformed or colliding addresses **before executing the collector**. Always use this wrapper: bare env interpolation can turn a missing host into `:4317`, an unsafe all-interfaces bind.
+Standalone config also supports `OTEL_GRPC_PORT` (4317) and `OTEL_HTTP_PORT` (4318) for the **private receiver only**, plus `OTEL_HEALTH_BIND` (loopback), `OTEL_HEALTH_PORT` (13133), and `OTEL_METRICS_PORT` (8888). These are proof overrides, not exposed stack props. Health and internal metrics stay loopback-only by default.
+
+Both OTLP receivers feed all three pipelines. `otlp` binds loopback on its independently configured ports; `otlp/tailnet` binds `OTEL_TAILNET_BIND` on the standard private gRPC and HTTP ports. There is no Serve hop and no extra LaunchAgent right is needed to bind the private interface. The second address is mandatory, even during validation. Alchemy checks the inputs and launches through `scripts/collector.sh`, which refuses missing, wildcard, malformed or colliding addresses **before executing the collector**. Always use this wrapper: bare env interpolation can turn a missing host into `:4317`, an unsafe all-interfaces bind.
+
+The wrapper validates loopback port ranges and collisions, then uses system `lsof` to check for existing listeners. An occupied port produces an explicit `OTEL_LOOPBACK_GRPC_PORT` or `OTEL_LOOPBACK_HTTP_PORT` error before collector execution. Wildcard listeners count as conflicts; a listener on a different concrete interface does not. System `lsof` is required; the wrapper fails if inspection is unavailable or errors. This check also runs during wrapper validation, so unload the existing agent before validating on its current ports. Do not kill an unrelated port owner to make room. The check cannot reserve ports: the collector's bind remains the final authority if another process races startup.
 
 The unauthenticated second receiver belongs only on the approved, access-controlled private network. Do not expose it to the internet or use `0.0.0.0`. The health endpoint reports process health, **not** ClickHouse availability or completed delivery.
 
@@ -88,7 +94,7 @@ The unauthenticated second receiver belongs only on the approved, access-control
 
 Deployment requires macOS arm64, a logged-in GUI user session and the reviewed ClickHouse schema. The Linux proof does not prove launchd integration; run the readback below during the approved macOS deployment.
 
-1. List all listening ports and resolve conflicts before choosing the bind address. The standard OTLP ports may already be occupied.
+1. List all listening ports and resolve conflicts before choosing the bind address and loopback port pair. The standard OTLP ports may already be occupied. Set both loopback inputs if needed; do not change the private receiver ports to work around a loopback conflict.
 2. Review the DDL, collector config and Alchemy plan. Confirm the endpoint, database `otel`, user permissions and free disk capacity. Keep credentials out of source files, shell history and plan artifacts.
 3. Use the same checkout, working directory and stage for plan, deploy and destroy. Keep it in place: the LaunchAgent uses absolute config and preflight paths in this checkout. Alchemy hashes both files into the agent props so changes restart it.
 4. Set the variables above through the approved local secret/environment mechanism, then:
@@ -112,7 +118,7 @@ The binary installer downloads the pinned release and its `.sha256` file. Both m
 
 ## Point a service at it
 
-Set the service's OTLP exporter endpoint to the collector's approved private address using `OTEL_EXPORTER_OTLP_ENDPOINT`. Use `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` for HTTP on port 4318, or `grpc` on port 4317. Standard HTTP exporters append `/v1/traces`, `/v1/logs` and `/v1/metrics` to the base endpoint. A signal-specific endpoint must include its signal path. Use a stable `service.name` and the shared producer layer's attribute allowlist. Do not connect Alchemy's own `Telemetry/Layer` to this collector.
+Set the service's OTLP exporter endpoint to the collector's approved private address using `OTEL_EXPORTER_OTLP_ENDPOINT`. Use `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` for private HTTP on port 4318, or `grpc` on port 4317. Local services use the configured loopback ports instead, such as HTTP 14318 and gRPC 14317 when those overrides are selected. Standard HTTP exporters append `/v1/traces`, `/v1/logs` and `/v1/metrics` to the base endpoint. A signal-specific endpoint must include its signal path. Use a stable `service.name` and the shared producer layer's attribute allowlist. Do not connect Alchemy's own `Telemetry/Layer` to this collector.
 
 ## Rollback
 
@@ -132,7 +138,7 @@ Redeploy to reload it. Restore a previously reviewed checkout and deploy to roll
 
 ## Proof and gates
 
-Run the outage proof only on the assigned Linux test worker, never on a deployment host. Docker socket access is not required: install a local ClickHouse 24.12.6.70 binary and a checksum-verified linux-amd64 collector 0.163.1 in disposable scratch. The script constructs a new local endpoint and data directory. It never accepts an existing ClickHouse URL.
+Run the outage proof only on the assigned Linux test worker, never on a deployment host. System `lsof` is required for preflight. Docker socket access is not required: install a local ClickHouse 24.12.6.70 binary and a checksum-verified linux-amd64 collector 0.163.1 in disposable scratch. The script constructs a new local endpoint and data directory. It never accepts an existing ClickHouse URL.
 
 ```sh
 # Export KILL_TEST_MACHINE to the authorized test machine name out of band.
@@ -141,7 +147,7 @@ Run the outage proof only on the assigned Linux test worker, never on a deployme
 scripts/kill-test.sh
 ```
 
-The proof first sends a full request of each signal through **each** HTTP receiver. The second receiver uses a separate local loopback address as a stand-in, never a real network interface. It then stops ClickHouse for **600 seconds** while sending 20 spans, 20 logs and one point of each of five metric types every second. It measures sender latency, serialized queue bytes and physical storage sizes, SIGKILLs the collector, recovers exactly the same queued bytes while ClickHouse remains down, restores ClickHouse, and verifies counts, unique span IDs, the redaction fixture and integer-only usage counters. It also verifies that each queue reports the configured byte capacity. All owned processes stop on completion or failure. Evidence remains in a new `kill-test-*` directory; preserve `result.json`, then reversibly trash disposable data. `--outage-seconds 5` is a smoke test, not the acceptance proof.
+The proof first sends a full request of each signal through **each** HTTP receiver, with distinct loopback and private-receiver port overrides. The second receiver uses a separate local loopback address as a stand-in, never a real network interface. It then stops ClickHouse for **600 seconds** while sending 20 spans, 20 logs and one point of each of five metric types every second. It measures sender latency, serialized queue bytes and physical storage sizes, SIGKILLs the collector, recovers exactly the same queued bytes while ClickHouse remains down, restores ClickHouse, and verifies counts, unique span IDs, the redaction fixture and integer-only usage counters. It also verifies that each queue reports the configured byte capacity. All owned processes stop on completion or failure. Evidence remains in a new `kill-test-*` directory; preserve `result.json`, then reversibly trash disposable data. `--outage-seconds 5` is a smoke test, not the acceptance proof.
 
 Code gates:
 

@@ -14,6 +14,8 @@ import {
 } from "./src/collector-binary.js";
 import {
   collectorSettings,
+  DEFAULT_LOOPBACK_GRPC_PORT,
+  DEFAULT_LOOPBACK_HTTP_PORT,
   DEFAULT_QUEUE_BYTES,
 } from "./src/collector-settings.js";
 import { LaunchdAgent, LaunchdAgentProvider } from "./src/launchd-agent.js";
@@ -49,8 +51,16 @@ export default Alchemy.Stack(
     const queueBytes = yield* Config.Int("OTEL_QUEUE_BYTES").pipe(
       Config.withDefault(DEFAULT_QUEUE_BYTES)
     );
+    const loopbackGrpcPort = yield* Config.Int("OTEL_LOOPBACK_GRPC_PORT").pipe(
+      Config.withDefault(DEFAULT_LOOPBACK_GRPC_PORT)
+    );
+    const loopbackHttpPort = yield* Config.Int("OTEL_LOOPBACK_HTTP_PORT").pipe(
+      Config.withDefault(DEFAULT_LOOPBACK_HTTP_PORT)
+    );
     const settings = yield* operation("CollectorSettings.validate", () =>
-      Promise.resolve(collectorSettings(bind, queueBytes))
+      Promise.resolve(
+        collectorSettings(bind, queueBytes, loopbackGrpcPort, loopbackHttpPort)
+      )
     ).pipe(Effect.orDie);
     const configDigest = yield* operation("CollectorConfig.digest", async () =>
       createHash("sha256")

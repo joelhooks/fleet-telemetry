@@ -1,0 +1,57 @@
+{
+  "scope": "Local throwaway ClickHouse and owned local test listeners only; no live deployment",
+  "base_commit": "682a06375f725b5ec0663efd51977728e696ec7a",
+  "branch": "collector-ports",
+  "config_validation": {
+    "loopback_grpc": "127.0.0.1:14317",
+    "loopback_http": "127.0.0.1:14318",
+    "private_grpc_test_address": "127.0.0.2:4317",
+    "private_http_test_address": "127.0.0.2:4318",
+    "passed": true
+  },
+  "tests_passed": 62,
+  "preflight_cases": [
+    "Missing or unsafe private address rejected before execution",
+    "Loopback defaults and independent overrides forwarded",
+    "Noninteger, privileged, out-of-range, health, metrics and duplicate ports rejected",
+    "Occupied loopback gRPC and HTTP ports rejected before execution",
+    "Wildcard listener rejected as a loopback conflict",
+    "Different concrete interface listener does not block loopback",
+    "Free loopback ports allow command execution"
+  ],
+  "smoke": {
+    "command": "scripts/kill-test.sh --outage-seconds 5",
+    "outage_seconds_actual": 5.43,
+    "elapsed_seconds": 15.999,
+    "requests": 21,
+    "sender_errors": 0,
+    "max_sender_seconds": 0.00741468695923686,
+    "loopback_and_tailnet_ports_distinct": true,
+    "queue_before_restart_bytes": 109020,
+    "queue_after_restart_bytes": 109020,
+    "queue_final_bytes": 0,
+    "counts": {
+      "otel_traces": 140,
+      "otel_logs": 140,
+      "otel_metrics_gauge": 7,
+      "otel_metrics_sum": 7,
+      "otel_metrics_summary": 7,
+      "otel_metrics_histogram": 7,
+      "otel_metrics_exponential_histogram": 7
+    },
+    "redaction_and_integer_usage_assertions": "passed",
+    "passed": true,
+    "source_sha256": {
+      "apps/collector/collector.yaml": "4b49b1eb4dec04d22db053be02211d251eadca5fa3bed45384643e58a250e2e8",
+      "scripts/collector.sh": "69f00b8e8b7ef3f158c237967c1dad3b91c093d26684802a94d12dc26c92c7f4",
+      "scripts/kill-test.py": "c72f66e4e7ac603d35d8633cef6d858788e713570f2655e3e9279a6f71b2a401",
+      "apps/collector/redaction-fixture.json": "bda0e414d2ee41638222342acb573edf0ffef8b23a5fba49712168d092dba28f"
+    }
+  },
+  "limitations": [
+    "Five-second integration smoke only; the earlier ten-minute byte-queue proof was not repeated for the port-only change",
+    "Both receiver HTTP endpoints were exercised on separate local addresses and independent ports, not a real tailnet interface",
+    "Native macOS lsof, launchd deployment and gRPC sends remain operator checks",
+    "Port inspection cannot reserve a port against startup races"
+  ]
+}

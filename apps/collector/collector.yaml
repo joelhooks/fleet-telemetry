@@ -5,9 +5,9 @@ receivers:
   otlp:
     protocols:
       grpc:
-        endpoint: 127.0.0.1:${env:OTEL_GRPC_PORT:-4317}
+        endpoint: 127.0.0.1:${env:OTEL_LOOPBACK_GRPC_PORT:-4317}
       http:
-        endpoint: 127.0.0.1:${env:OTEL_HTTP_PORT:-4318}
+        endpoint: 127.0.0.1:${env:OTEL_LOOPBACK_HTTP_PORT:-4318}
   otlp/tailnet:
     protocols:
       grpc:

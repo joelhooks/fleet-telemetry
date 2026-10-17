@@ -109,10 +109,10 @@ def main():
     work = Path(tempfile.mkdtemp(prefix="kill-test-", dir=root))
     (work / "data").mkdir()
     os.chmod(work, 0o700)
-    ports = {name: free_port() for name in ["http", "grpc", "health", "metrics", "clickhouse"]}
+    ports = {name: free_port() for name in ["http", "grpc", "loopback_http", "loopback_grpc", "health", "metrics", "clickhouse"]}
     assert len(set(ports.values())) == len(ports)
     ch_url = f'http://{LOOPBACK}:{ports["clickhouse"]}'
-    otlp_url = f'http://{LOOPBACK}:{ports["http"]}'
+    otlp_url = f'http://{LOOPBACK}:{ports["loopback_http"]}'
     second_otlp_url = f'http://{SECOND_BIND}:{ports["http"]}'
     metrics_url = f'http://{LOOPBACK}:{ports["metrics"]}/metrics'
     config = work / "clickhouse.xml"
@@ -131,6 +131,7 @@ def main():
         "CLICKHOUSE_ENDPOINT": ch_url, "CLICKHOUSE_USERNAME": "default", "CLICKHOUSE_PASSWORD": "",
         "OTEL_TAILNET_BIND": SECOND_BIND, "OTEL_HEALTH_BIND": LOOPBACK,
         "OTEL_HTTP_PORT": str(ports["http"]), "OTEL_GRPC_PORT": str(ports["grpc"]),
+        "OTEL_LOOPBACK_HTTP_PORT": str(ports["loopback_http"]), "OTEL_LOOPBACK_GRPC_PORT": str(ports["loopback_grpc"]),
         "OTEL_HEALTH_PORT": str(ports["health"]), "OTEL_METRICS_PORT": str(ports["metrics"]),
         "OTEL_DATA_DIR": str(work / "collector"), "OTEL_COLLECTOR_HOST": "proof",
     }
@@ -215,6 +216,7 @@ def main():
         wait_for(lambda: sql("SELECT count() FROM otel.otel_traces") == str(2 * args.rows_per_request))
         wait_for(lambda: sample_queue() == 0)
         result["receivers_tested"] = ["loopback", "second local address standing in for tailnet"]
+        result["loopback_and_tailnet_ports_distinct"] = True
         print(json.dumps({"state": "outage", "seconds": args.outage_seconds}), flush=True)
         stop(ch)
         outage_start = time.monotonic()
