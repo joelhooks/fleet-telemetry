@@ -1,0 +1,11 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Exact fresh pins that the release-age check would otherwise hold back (same pins as rat-stack-base).
+minimumReleaseAgeExclude:
+  - alchemy@2.0.0-beta.83
+  - effect@4.0.0
+  - "@effect/vitest@4.0.0"
+  - "@effect/platform-node@4.0.0"
+  - "@effect/platform-node-shared@4.0.0"
