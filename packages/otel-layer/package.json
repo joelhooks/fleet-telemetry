@@ -1,0 +1,29 @@
+{
+  "name": "@fleet-telemetry/otel-layer",
+  "version": "0.1.0",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:matrix": "bash fixtures/test-matrix.sh"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.5",
+    "effect": "4.0.5",
+    "vitest": "5.0.3"
+  },
+  "peerDependencies": {
+    "effect": ">=4.0.1 <5"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "otel-layer-consumer-4.0.5",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "smoke": "node smoke.ts"
+  },
+  "dependencies": {
+    "@fleet-telemetry/otel-layer": "file:../..",
+    "effect": "4.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "typescript": "7.0.2"
+  }
+}
