@@ -1,0 +1,32 @@
+{
+  "scope": "Local throwaway ClickHouse only; no deployment or live schema change",
+  "collector_version": "0.163.1",
+  "exporter_source_version": "0.163.0",
+  "clickhouse_version": "24.12.6.70",
+  "effect_version": "4.0.5",
+  "command": "scripts/kill-test.sh",
+  "outage_seconds_requested": 600,
+  "outage_seconds_actual": 600.464,
+  "elapsed_seconds": 609.612,
+  "requests": 1803,
+  "sender_errors": 0,
+  "max_sender_seconds": 0.009261857951059937,
+  "queue_peak_requests": 1800,
+  "queue_before_collector_sigkill": 1800,
+  "queue_after_collector_restart_while_clickhouse_down": 1800,
+  "queue_final_requests": 0,
+  "expected_spans_and_logs": 12020,
+  "counts": {
+    "otel_traces": 12020,
+    "otel_logs": 12020,
+    "otel_metrics_gauge": 601,
+    "otel_metrics_sum": 601,
+    "otel_metrics_summary": 601,
+    "otel_metrics_histogram": 601,
+    "otel_metrics_exponential_histogram": 601
+  },
+  "redaction": "celld bodies, URL keys, query strings and secret-shaped keys scrubbed; event.name preserved",
+  "passed": true,
+  "macos_launchd_live_check": "not run: proof host is Linux; operator deployment readback required",
+  "delivery_semantics": "at least once after successful collector ingress; not producer-side durability or universal exactly-once delivery"
+}

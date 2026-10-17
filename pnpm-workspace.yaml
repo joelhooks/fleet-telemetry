@@ -2,10 +2,13 @@ packages:
   - "apps/*"
   - "packages/*"
 
+allowBuilds:
+  workerd: false # This launchd stack does not run Cloudflare's worker runtime.
+
 # Exact fresh pins that the release-age check would otherwise hold back (Effect 4.0.5 matches alchemy-proxmox and alchemy-nest).
 minimumReleaseAgeExclude:
   - alchemy@2.0.0-beta.83
   - effect@4.0.5
   - "@effect/vitest@4.0.5"
-  - "@effect/platform-node@4.0.0"
-  - "@effect/platform-node-shared@4.0.0"
+  - "@effect/platform-node@4.0.5"
+  - "@effect/platform-node-shared@4.0.5"

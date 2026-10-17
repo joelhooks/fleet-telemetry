@@ -1,0 +1,15 @@
+{
+  "serviceName": "celld",
+  "body": "console: request to https://example.invalid/users/42?token=CANARY_NOT_A_SECRET failed",
+  "attributes": [
+    { "key": "event.name", "value": { "stringValue": "celld.request.failed" } },
+    { "key": "api.token", "value": { "stringValue": "CANARY_NOT_A_SECRET" } },
+    { "key": "PASSWORD", "value": { "stringValue": "CANARY_NOT_A_SECRET" } },
+    { "key": "url.full", "value": { "stringValue": "https://example.invalid/users/42?token=CANARY_NOT_A_SECRET" } },
+    { "key": "http.url", "value": { "stringValue": "https://example.invalid/users/42?token=CANARY_NOT_A_SECRET" } },
+    { "key": "http.target", "value": { "stringValue": "/users/42?token=CANARY_NOT_A_SECRET" } },
+    { "key": "url.query", "value": { "stringValue": "token=CANARY_NOT_A_SECRET" } },
+    { "key": "url.path", "value": { "stringValue": "/users/42" } },
+    { "key": "custom.reference", "value": { "stringValue": "https://example.invalid/status?token=CANARY_NOT_A_SECRET" } }
+  ]
+}

@@ -1,0 +1,134 @@
+# otelcol-contrib 0.163.1 (clickhouseexporter 0.163.0).
+# Never creates schema. Review plans/clickhouse-otel-ddl.sql separately.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: ${env:OTEL_BIND:-127.0.0.1}:${env:OTEL_GRPC_PORT:-4317}
+      http:
+        endpoint: ${env:OTEL_BIND:-127.0.0.1}:${env:OTEL_HTTP_PORT:-4318}
+
+extensions:
+  health_check:
+    endpoint: ${env:OTEL_HEALTH_BIND:-127.0.0.1}:${env:OTEL_HEALTH_PORT:-13133}
+  file_storage:
+    directory: ${env:OTEL_DATA_DIR}/queue
+    create_directory: true
+    fsync: true
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+  attributes/secret_keys:
+    actions:
+      - pattern: '(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\.target).*'
+        action: delete
+  # attributes covers only span/log/datapoint attributes, not resource/scope/events.
+  # Drop URL keys entirely and strip query suffixes from arbitrary string attributes.
+  transform/safety:
+    error_mode: propagate
+    trace_statements:
+      - context: resource
+        statements:
+          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+      - context: scope
+        statements:
+          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+      - context: spanevent
+        statements:
+          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+      - context: span
+        statements:
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+          - 'set(status.message, "")'
+    log_statements:
+      - context: resource
+        statements:
+          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+      - context: scope
+        statements:
+          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+      - context: log
+        statements:
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+          - 'set(body, "<redacted>")'
+    metric_statements:
+      - context: resource
+        statements:
+          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+      - context: scope
+        statements:
+          - 'delete_matching_keys(attributes, "(?i).*(token|key|secret|password|authorization|cookie|prompt|body|message|url|http\\.target).*")'
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+      - context: datapoint
+        statements:
+          - 'replace_all_patterns(attributes, "value", "\\?.*", "")'
+  resource:
+    attributes:
+      - key: collector.host
+        value: ${env:OTEL_COLLECTOR_HOST}
+        action: upsert
+
+exporters:
+  clickhouse:
+    endpoint: ${env:CLICKHOUSE_ENDPOINT}
+    username: ${env:CLICKHOUSE_USERNAME:-default}
+    password: ${env:CLICKHOUSE_PASSWORD:-}
+    database: otel
+    create_schema: false
+    ttl: 720h
+    async_insert: false
+    timeout: 10s
+    sending_queue:
+      enabled: true
+      num_consumers: 4
+      sizer: requests
+      queue_size: 250000
+      storage: file_storage
+      block_on_overflow: false
+      # Batch AFTER durable enqueue, not in a volatile batch processor.
+      batch:
+        sizer: items
+        min_size: 1024
+        max_size: 1024
+        flush_timeout: 1s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 1s
+      max_interval: 30s
+      max_elapsed_time: 0s
+
+service:
+  extensions: [health_check, file_storage]
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: ${env:OTEL_HEALTH_BIND:-127.0.0.1}
+                port: ${env:OTEL_METRICS_PORT:-8888}
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/secret_keys, transform/safety, resource]
+      exporters: [clickhouse]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/secret_keys, transform/safety, resource]
+      exporters: [clickhouse]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/secret_keys, transform/safety, resource]
+      exporters: [clickhouse]

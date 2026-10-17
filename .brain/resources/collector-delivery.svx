@@ -1,0 +1,31 @@
+---
+title: "Collector delivery boundary and proof"
+type: resource
+status: active
+created: 2026-10-17
+---
+
+# Collector delivery boundary and proof
+
+The collector owns delivery after successful OTLP ingress, not the producer's queue. celld can drop beyond its bounded 8,192-event channel before sending. The ClickHouse exporter delivers at least once, so a lost insert acknowledgment can cause duplicate rows.
+
+## Durable decisions
+
+- Pin collector 0.163.1 and its ClickHouse exporter 0.163.0. Use the exporter's Map-based schema for ClickHouse 24.12, not JSON or newer full-text indexes.
+- Keep `create_schema: false`. Only a reviewed operator action may apply `plans/clickhouse-otel-ddl.sql`. The isolated proof applies it only to its newly started throwaway database.
+- Batch after persistent enqueue with `sending_queue.batch`, not a volatile processor. The queue uses file storage with fsync and retries without an elapsed-time limit.
+- Drop URL attributes and secret-shaped keys, strip other attribute query strings, and redact every log body. Keep stable event names in `event.name`.
+- Keep `LaunchdAgent` generic and separate from the collector binary installer. It refuses unmanaged plists and requires a macOS GUI user session. Verified binaries and queued data survive destroy for rollback.
+- Do not reuse or route Alchemy's own telemetry layer into this collector. The CLI commands in the runbook disable only that invocation's vendor telemetry.
+
+## Evidence
+
+`docs/collector-proof.json` records the full 600-second outage run. It restored 12,020 spans, 12,020 logs and 601 points in each of five metric tables. The persistent queue retained 1,800 requests across a collector SIGKILL/restart while ClickHouse was still down, then drained to zero. Maximum sender latency was 9.262 ms with zero sender errors.
+
+The resource tests exercise plist rendering, create/update/delete/read, mode 600, unmanaged-file protection, platform guards, checksum rejection, cache integrity and actual release-archive installation/idempotence. They use a fake launchctl. They do not prove real launchd behavior.
+
+## Deployment remains separate
+
+No deployment host or live database was changed. During an approved macOS deployment, verify `launchctl print` reports running, send a synthetic trace and log, and read those exact rows from the reviewed `otel` tables. Process health is not delivery health.
+
+See `apps/collector/README.md` for deployment, queue capacity, known sanitizer limits, ports and rollback.

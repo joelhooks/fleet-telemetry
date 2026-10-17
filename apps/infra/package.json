@@ -1,0 +1,16 @@
+{
+  "name": "@fleet-telemetry/infra",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.5",
+    "alchemy": "2.0.0-beta.83",
+    "effect": "4.0.5"
+  }
+}
