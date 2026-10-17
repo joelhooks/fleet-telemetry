@@ -16,11 +16,13 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "test:matrix": "bash fixtures/test-matrix.sh"
+    "test:matrix": "bash fixtures/test-matrix.sh",
+    "prepare": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "@effect/vitest": "4.0.5",
     "effect": "4.0.5",
+    "typescript": "7.0.2",
     "vitest": "5.0.3"
   },
   "peerDependencies": {
