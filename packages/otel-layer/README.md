@@ -104,6 +104,8 @@ The same counters are available locally and through cumulative OTLP metrics:
 - `fleet.telemetry.items_dropped`, including queue overflow, failed exports and closure loss.
 - `fleet.telemetry.exports_failed`, per failed HTTP export, including timeout/interruption.
 
+Active layers register these counters at startup, so the first metric snapshot includes explicit zeros before any drops or export failures. Attribute-drop counters use only the seven `fleet.drop_class` values listed above; the other two counters have no labels. Drops found while filtering resources are included in the first snapshot rather than replaced with zero. Disabled layers register no metrics.
+
 `Service.counters` also exposes queued and exported record counts. Drops discovered during metric sanitization appear in the next metric snapshot. Counters remain readable locally while the collector is unavailable; remote counts require a later successful export. The layer uses the consumer's metric registry, so it sees metrics registered before and after layer acquisition.
 
 ## Test layer

@@ -22,6 +22,113 @@ describe("Effect compatibility and capture", () => {
     ).toBe("4.0.5");
   });
 
+  it.effect("collects all self-counters at zero before any drops", () =>
+    isolated(
+      Effect.gen(function* firstSnapshot() {
+        const capture = yield* FleetTelemetry.TestService;
+        const counters = yield* capture.counters;
+        expect(counters.droppedItems).toBe(0);
+        expect(counters.failedExports).toBe(0);
+        expect(Object.values(counters.droppedAttributes)).toEqual(
+          Array.from({ length: 7 }, () => 0)
+        );
+        const metrics = yield* capture.metrics;
+        expect(metrics).toHaveLength(9);
+        for (const name of [
+          "fleet.telemetry.items_dropped",
+          "fleet.telemetry.exports_failed",
+        ]) {
+          const metric = metrics.find((value) => value.name === name);
+          expect(metric).toMatchObject({
+            sum: {
+              aggregationTemporality: 2,
+              dataPoints: [{ asDouble: 0, attributes: [] }],
+              isMonotonic: true,
+            },
+            unit: "1",
+          });
+        }
+        const dropped = metrics.filter(
+          (metric) => metric.name === "fleet.telemetry.attributes_dropped"
+        );
+        expect(dropped).toHaveLength(7);
+        expect(
+          dropped.map((metric) => metric.sum?.dataPoints[0]?.attributes)
+        ).toEqual(
+          expect.arrayContaining(
+            [
+              "secret_key",
+              "content_key",
+              "not_allowed",
+              "credential_value",
+              "invalid_value",
+              "limit",
+              "free_text",
+            ].map((reason) => [
+              { key: "fleet.drop_class", value: { stringValue: reason } },
+            ])
+          )
+        );
+        for (const metric of dropped) {
+          expect(metric).toMatchObject({
+            sum: {
+              aggregationTemporality: 2,
+              dataPoints: [{ asDouble: 0 }],
+              isMonotonic: true,
+            },
+            unit: "1",
+          });
+        }
+      }).pipe(Effect.provide(FleetTelemetry.layerTest))
+    )
+  );
+
+  it.effect("preserves resource drops and increments the seeded series", () =>
+    isolated(
+      Effect.gen(function* resourceDrops() {
+        const capture = yield* FleetTelemetry.TestService;
+        expect(
+          (yield* capture.counters).droppedAttributes.credential_value
+        ).toBe(1);
+        const initial = yield* capture.metrics;
+        const dropped = initial.filter(
+          (metric) => metric.name === "fleet.telemetry.attributes_dropped"
+        );
+        expect(dropped).toHaveLength(7);
+        const credentialDrops = dropped.find((metric) =>
+          metric.sum?.dataPoints[0]?.attributes?.some(
+            ({ key, value }) =>
+              key === "fleet.drop_class" &&
+              value.stringValue === "credential_value"
+          )
+        );
+        expect(credentialDrops?.sum?.dataPoints[0]?.asDouble).toBe(1);
+        yield* capture.clear;
+        yield* Effect.void.pipe(
+          Effect.withSpan("safe.span", {
+            attributes: { "http.route": "ghp_fixture" },
+          })
+        );
+        const next = yield* capture.metrics;
+        expect(
+          next.find(
+            (metric) =>
+              metric.name === "fleet.telemetry.attributes_dropped" &&
+              metric.sum?.dataPoints[0]?.attributes?.some(
+                ({ key, value }) =>
+                  key === "fleet.drop_class" &&
+                  value.stringValue === "credential_value"
+              )
+          )?.sum?.dataPoints[0]?.asDouble
+        ).toBe(2);
+      }).pipe(
+        Effect.provide(
+          FleetTelemetry.layerTestWith({ serviceName: "sk-fixture" })
+        )
+      )
+    )
+  );
+
   it.effect(
     "captures spans, logs, resources, events, links and typed errors without raw bodies",
     () =>
@@ -288,6 +395,7 @@ describe("configuration and no-op", () => {
             42
           );
           expect((yield* service.counters).queuedItems).toBe(0);
+          expect((yield* Metric.MetricRegistry).size).toBe(0);
         }).pipe(Effect.provide(FleetTelemetry.layerFromEnv()));
       })
     )
