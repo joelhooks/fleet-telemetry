@@ -53,6 +53,73 @@ const sample = Effect.gen(function* sampleLatency() {
   return median(values);
 });
 
+it.live("exports self-counters at zero on the first idle interval", () =>
+  isolated(
+    Effect.gen(function* firstInterval() {
+      const received = yield* Deferred.make<string>();
+      const listener = yield* server((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          response.end("{}");
+          if (request.url === "/v1/metrics") {
+            Deferred.doneUnsafe(
+              received,
+              Effect.succeed(Buffer.concat(chunks).toString())
+            );
+          }
+        });
+      });
+      yield* Effect.gen(function* inspectFirstExport() {
+        const telemetry = yield* FleetTelemetry.Service;
+        const body = yield* Deferred.await(received).pipe(
+          Effect.timeout("2 seconds")
+        );
+        expect(JSON.parse(body)).toMatchObject({
+          resourceMetrics: [
+            {
+              scopeMetrics: [
+                {
+                  metrics: expect.arrayContaining(
+                    [
+                      "fleet.telemetry.items_dropped",
+                      "fleet.telemetry.exports_failed",
+                      "fleet.telemetry.attributes_dropped",
+                    ].map((name) =>
+                      expect.objectContaining({
+                        name,
+                        sum: expect.objectContaining({
+                          dataPoints: [
+                            expect.objectContaining({ asDouble: 0 }),
+                          ],
+                        }),
+                        unit: "1",
+                      })
+                    )
+                  ),
+                },
+              ],
+            },
+          ],
+        });
+        const counters = yield* telemetry.counters;
+        expect(counters.droppedItems).toBe(0);
+        expect(counters.failedExports).toBe(0);
+        expect(Object.values(counters.droppedAttributes)).toEqual(
+          Array.from({ length: 7 }, () => 0)
+        );
+      }).pipe(
+        Effect.provide(
+          FleetTelemetry.layer({
+            endpoint: listener.endpoint,
+            exportIntervalMs: 10,
+          })
+        )
+      );
+    })
+  )
+);
+
 it.live(
   "closed collector does not delay traces or alter success/failure; failures are counted",
   () =>

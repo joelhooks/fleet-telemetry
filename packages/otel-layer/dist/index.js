@@ -140,13 +140,14 @@ const make = (options, test) => Effect.gen(function* acquireTelemetry() {
                 "fleet.drop_class": reason,
             });
         };
-        // Resource filtering precedes the registry being available.
+        // Register every self-counter series before the first snapshot.
+        increment("fleet.telemetry.items_dropped", 0);
+        increment("fleet.telemetry.exports_failed", 0);
+        // Resource filtering precedes the registry; retain any drops it found.
         for (const reason of droppedClasses) {
-            if (drops[reason]) {
-                increment("fleet.telemetry.attributes_dropped", drops[reason], {
-                    "fleet.drop_class": reason,
-                });
-            }
+            increment("fleet.telemetry.attributes_dropped", drops[reason], {
+                "fleet.drop_class": reason,
+            });
         }
         const offer = (item) => {
             if (test) {
