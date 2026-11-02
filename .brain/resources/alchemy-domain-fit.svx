@@ -1,0 +1,76 @@
+---
+title: "Alchemy Domain fit: fleet-telemetry"
+type: resource
+status: active
+created: 2026-11-02
+---
+
+# Alchemy Domain fit: fleet-telemetry
+
+This is part of a rat-stack review of whether each app fits `@alchemy.run/domain` (2026-11-02). It was read-only research: no code or dependency changed.
+
+**Verdict: `no`.** fleet-telemetry has no business state, commands or lifecycle to model. It is a pinned collector, a launchd resource and a client tracing layer. Its only data is append-only telemetry bound for ClickHouse, which is bulk analytics, the case the brief lists under "doesn't fit".
+
+## 1. The app today
+
+**Where state lives:**
+- **Telemetry rows:** in ClickHouse (`otel.*` tables) on the local host, written by the collector's `clickhouse` exporter (`apps/collector/collector.yaml`, `exporters.clickhouse`). The schema is reviewed separately (`plans/clickhouse-otel-ddl.sql`); the collector never creates schema.
+- **In-flight telemetry:** in the collector's persistent `file_storage` queue on local disk (`collector.yaml`, `extensions.file_storage` and `exporters.clickhouse.sending_queue.storage`), under `OTEL_DATA_DIR`.
+- **Deploy state:** Alchemy `localState()` in `apps/infra/alchemy.run.ts`. That's infra state, not app state.
+- **None of:** D1, KV, Durable Objects or Postgres.
+
+**Lifecycles:**
+- None in the app. The collector process's lifecycle is launchd (`KeepAlive`), declared as a custom Alchemy resource, `Fleet.LaunchdAgent`, in `apps/infra/src/launchd-agent.ts`.
+- `Fleet.CollectorBinary` (`apps/infra/src/collector-binary.ts`) downloads and verifies the pinned `otelcol-contrib` 0.163.1 by sha256.
+- There's no XState and no hand-rolled state machine.
+
+**Surfaces:**
+- **OTLP gRPC and HTTP receivers,** on loopback and the tailnet bind (`collector.yaml`, `receivers.otlp` and `otlp/tailnet`).
+- **The shared Effect layer** `packages/otel-layer` (`src/index.ts`: `Service`, `layer`, `layerFromEnv`, `layerTest`, `FleetTelemetry`). Services import it to emit spans, logs and metrics, and it never blocks the caller.
+- **None of:** RPC, an HTTP API, MCP tools or a Foldkit UI.
+
+## 2. In Domain terms
+
+An honest mapping comes out almost empty.
+
+- **Aggregates:** none. No entity has invariants that a command could violate. A span or log record is a fact recorded once, never changed.
+- **Commands:** none from users or agents. The only "write" is OTLP export, and it's high-volume, fire-and-forget telemetry with deliberate drop-on-overflow (`Counters.droppedItems` in `src/index.ts`). That's the opposite of a command that must be decided and recorded.
+- **Events:** each telemetry record could be called an event. At fleet scale that's hundreds of thousands a day, and they need columnar analytics, not per-aggregate streams on a Durable Object.
+- **Views and projections:** queries over ClickHouse (usage, cost, latency percentiles). Those are analytics SQL, not projections a model maintains.
+- **Policies and sagas:** none. Alarms on the data (table part counts, latency thresholds) live with the services' owners, not in this repo.
+- **External systems:** ClickHouse, the OpenTelemetry Collector, launchd and the instrumented services.
+
+## 3. What Domain would replace
+
+Nothing. Every file here is one of three things:
+- **infra Alchemy already owns:** `apps/infra/alchemy.run.ts`, `apps/infra/src/launchd-agent.ts`, `apps/infra/src/collector-binary.ts`, `apps/infra/src/collector-settings.ts`;
+- **collector config:** `apps/collector/collector.yaml`, `scripts/collector.sh`;
+- **a client library:** `packages/otel-layer/src/*.ts`.
+
+There are no tables, DO classes, machines, RPC handlers or MCP tools for Domain to absorb.
+
+## 4. What doesn't fit
+
+- **The whole data path:** bulk, append-only telemetry with analytics reads across every service and host. That's the brief's "bulk analytics" and "cross-tenant queries" exceptions.
+- **Locality:** the README's rule is "nothing leaves our machines". Domain's production host is Cloudflare Durable Objects, so a Domain model here would either break that rule or run only in memory, which gives nothing.
+- **The client layer's contract:** it never blocks and drops on overflow. Domain commands are decided, recorded and acknowledged. Putting telemetry through a command path would add latency and backpressure exactly where the layer promises none.
+
+## 5. Migration cost
+
+Not applicable, because there's nothing to migrate. Forcing it would be a **rewrite** that adds a Durable Object event store in front of ClickHouse for no gain.
+
+## 6. Data migration risk
+
+None, if left alone. ClickHouse rows would not become Domain events; they stay analytics rows. Nothing live is touched by this memo.
+
+## 7. Beta risk
+
+None today. This repo pins `alchemy` `2.0.0-beta.83` for infra (`apps/infra/package.json`) and doesn't depend on `@alchemy.run/domain`.
+
+The relevant beta risk is the plain Alchemy bump: the custom `Fleet.LaunchdAgent` and `Fleet.CollectorBinary` providers use the Resource and Provider API. When ratstack moves to beta.85, re-run `pnpm --filter @fleet-telemetry/infra check` and `test`, then `alchemy deploy` with a dry plan, to catch provider API drift.
+
+## 8. Verdict
+
+**`no`.** fleet-telemetry is infrastructure plus a client library, and its data is bulk telemetry that belongs in ClickHouse, not a command-and-event model.
+
+**Where it does help Domain apps:** the reverse direction is the useful one. Domain apps should emit through `packages/otel-layer` (`FleetTelemetry`), so their commands, events and saga steps show up as spans in the same ClickHouse tables. That's worth a line in the ratstack pilot, as a Domain-to-OTEL span convention, rather than a migration here.
